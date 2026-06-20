@@ -270,6 +270,97 @@
     }
 
     .empty i { font-size: 32px; display: block; margin-bottom: 8px; }
+
+    .csv-section {
+      margin-bottom: 1.25rem;
+    }
+
+    .csv-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      margin-bottom: 8px;
+    }
+
+    .csv-toggle:hover { color: var(--text); }
+    .csv-toggle i.arrow { transition: transform 0.2s; font-size: 14px; }
+    .csv-toggle.open i.arrow { transform: rotate(90deg); }
+
+    .csv-panel {
+      display: none;
+      border: 0.5px dashed var(--border-hover);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      background: var(--bg);
+    }
+
+    .csv-panel.open { display: block; }
+
+    .drop-zone {
+      border: 0.5px dashed var(--border-hover);
+      border-radius: var(--radius-md);
+      padding: 20px 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      margin-bottom: 12px;
+    }
+
+    .drop-zone:hover, .drop-zone.dragover {
+      background: var(--bg-secondary);
+      border-color: var(--purple-strong);
+    }
+
+    .drop-zone i { font-size: 28px; color: var(--text-tertiary); display: block; margin-bottom: 6px; }
+    .drop-zone p { font-size: 13px; color: var(--text-secondary); }
+    .drop-zone span { font-size: 12px; color: var(--text-tertiary); }
+
+    .csv-hint {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      line-height: 1.7;
+    }
+
+    .csv-hint code {
+      display: block;
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-md);
+      padding: 8px 10px;
+      margin-top: 6px;
+      font-family: monospace;
+      font-size: 12px;
+      color: var(--text-secondary);
+      white-space: pre;
+    }
+
+    .csv-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .btn-csv-dl {
+      font-size: 12px;
+      padding: 5px 10px;
+      border-radius: var(--radius-md);
+      border: 0.5px solid var(--border-hover);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn-csv-dl:hover { background: var(--bg-secondary); color: var(--text); }
+
+    #csvFile { display: none; }
   </style>
 </head>
 <body>
@@ -281,6 +372,34 @@
       <button class="btn-add" onclick="addTask()">
         <i class="ti ti-plus"></i>追加
       </button>
+    </div>
+
+    <div class="csv-section">
+      <button class="csv-toggle" id="csvToggle" onclick="toggleCsv()">
+        <i class="ti ti-arrow-right arrow"></i>
+        <i class="ti ti-file-upload"></i>CSVで一括登録
+      </button>
+      <div class="csv-panel" id="csvPanel">
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('csvFile').click()"
+             ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+          <i class="ti ti-table-import"></i>
+          <p>クリックまたはCSVファイルをドロップ</p>
+          <span>文字コード: UTF-8</span>
+        </div>
+        <input type="file" id="csvFile" accept=".csv,text/csv" onchange="onFileSelect(event)" />
+        <div class="csv-hint">
+          書式：1列目にタスク名、2列目に状態（省略時は未着手）
+          <code>タスク名,状態
+会議の準備,未着手
+報告書を書く,着手中
+テスト完了,完了</code>
+        </div>
+        <div class="csv-actions">
+          <button class="btn-csv-dl" onclick="downloadSample()">
+            <i class="ti ti-download"></i>サンプルCSVをダウンロード
+          </button>
+        </div>
+      </div>
     </div>
 
     <div class="filters">
@@ -426,6 +545,89 @@
     document.getElementById('newTask').addEventListener('keydown', e => {
       if (e.key === 'Enter') addTask();
     });
+
+    const STATUS_MAP = {
+      '未着手': 'todo', 'todo': 'todo',
+      '着手中': 'doing', 'doing': 'doing',
+      '完了': 'done', 'done': 'done',
+    };
+
+    function toggleCsv() {
+      const toggle = document.getElementById('csvToggle');
+      const panel = document.getElementById('csvPanel');
+      toggle.classList.toggle('open');
+      panel.classList.toggle('open');
+    }
+
+    function parseCsv(text) {
+      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+      const imported = [];
+      const skipped = [];
+
+      for (const line of lines) {
+        const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, '').trim());
+        const name = cols[0];
+        if (!name || name === 'タスク名') continue;
+        if (name.length > 80) { skipped.push(name); continue; }
+        const rawStatus = (cols[1] || '').toLowerCase();
+        const status = STATUS_MAP[cols[1]] || STATUS_MAP[rawStatus] || 'todo';
+        imported.push({ id: Date.now() + Math.random(), name, status });
+      }
+      return { imported, skipped };
+    }
+
+    function applyImport(text) {
+      const { imported, skipped } = parseCsv(text);
+      if (imported.length === 0) {
+        showToast('読み込めるタスクが見つかりませんでした');
+        return;
+      }
+      tasks = [...imported.reverse(), ...tasks];
+      lastAction = null;
+      save(); render();
+      const msg = `${imported.length}件のタスクを登録しました` +
+        (skipped.length ? `（${skipped.length}件スキップ）` : '');
+      showToast(msg);
+      document.getElementById('csvToggle').classList.remove('open');
+      document.getElementById('csvPanel').classList.remove('open');
+    }
+
+    function onFileSelect(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => applyImport(ev.target.result);
+      reader.readAsText(file, 'UTF-8');
+      e.target.value = '';
+    }
+
+    function onDragOver(e) {
+      e.preventDefault();
+      document.getElementById('dropZone').classList.add('dragover');
+    }
+
+    function onDragLeave() {
+      document.getElementById('dropZone').classList.remove('dragover');
+    }
+
+    function onDrop(e) {
+      e.preventDefault();
+      document.getElementById('dropZone').classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => applyImport(ev.target.result);
+      reader.readAsText(file, 'UTF-8');
+    }
+
+    function downloadSample() {
+      const csv = 'タスク名,状態\n会議の準備,未着手\n報告書を書く,着手中\nテスト完了,完了\n';
+      const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'todo_sample.csv';
+      a.click();
+    }
 
     render();
   </script>
